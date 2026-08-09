@@ -1,5 +1,7 @@
 # Bitget PHP SDK
 
+![Bitget PHP Laravel SDK](https://i.postimg.cc/BncJyFmW/bitget-php-sdk-github.jpg)
+
 [![PHP Version](https://img.shields.io/badge/php-%5E8.2-777bb4)](composer.json)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Laravel](https://img.shields.io/badge/laravel-10%20%7C%2011%20%7C%2012%20%7C%2013-ff2d20)](composer.json)
