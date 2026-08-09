@@ -12,8 +12,36 @@ use GuzzleHttp\Psr7\Response;
 use Psr\Http\Message\RequestInterface;
 use Tigusigalpa\Bitget\Client;
 use Tigusigalpa\Bitget\Exceptions\AuthenticationException;
+use Tigusigalpa\Bitget\Exceptions\BitgetException;
 use Tigusigalpa\Bitget\Exceptions\RateLimitException;
 use Tigusigalpa\Bitget\Tests\TestCase;
+use Tigusigalpa\Bitget\WebsocketClient;
+use Tigusigalpa\Bitget\WebSocket\ConnectionInterface;
+use Tigusigalpa\Bitget\WebSocket\TextalkConnection;
+
+final class FakeWebsocketConnection implements ConnectionInterface
+{
+    public array $sent = [];
+    public array $received = [];
+
+    public function connect(string $url): void
+    {
+    }
+
+    public function send(string $payload): void
+    {
+        $this->sent[] = $payload;
+    }
+
+    public function receive(): ?string
+    {
+        return array_shift($this->received);
+    }
+
+    public function close(): void
+    {
+    }
+}
 
 class ClientTest extends TestCase
 {
@@ -109,5 +137,68 @@ class ClientTest extends TestCase
             $this->assertSame('40001', $e->bitgetCode);
             $this->assertStringContainsString('invalid API key', $e->getMessage());
         }
+    }
+
+    public function test_request_rejects_unexpected_http_status_with_success_envelope(): void
+    {
+        $client = $this->clientWithMockedResponses([
+            new Response(500, [], json_encode(['code' => '00000', 'msg' => 'success', 'requestTime' => 1, 'data' => []])),
+        ]);
+
+        try {
+            $client->requestPublic('GET', '/api/v3/market/tickers');
+            $this->fail('Expected BitgetException');
+        } catch (BitgetException $e) {
+            $this->assertSame('500', $e->bitgetCode);
+            $this->assertStringContainsString('Unexpected HTTP status 500', $e->getMessage());
+        }
+    }
+
+    public function test_request_rejects_oversized_response_body(): void
+    {
+        $client = $this->clientWithMockedResponses([
+            new Response(200, [], str_repeat('x', 10485761)),
+        ]);
+
+        try {
+            $client->requestPublic('GET', '/api/v3/market/tickers');
+            $this->fail('Expected BitgetException');
+        } catch (BitgetException $e) {
+            $this->assertSame('RESPONSE_TOO_LARGE', $e->bitgetCode);
+        }
+    }
+
+    public function test_request_throws_domain_exception_when_body_cannot_be_encoded(): void
+    {
+        $client = $this->clientWithMockedResponses([]);
+
+        try {
+            $client->request('POST', '/api/v3/trade/place-order', [], ['symbol' => "\xB1"]);
+            $this->fail('Expected BitgetException');
+        } catch (BitgetException $e) {
+            $this->assertSame('ENCODE_ERROR', $e->bitgetCode);
+        }
+    }
+
+    public function test_default_websocket_transport_uses_maintained_connection_adapter(): void
+    {
+        $this->assertInstanceOf(ConnectionInterface::class, new TextalkConnection());
+    }
+
+    public function test_websocket_login_returns_exchange_error_immediately(): void
+    {
+        $connection = new FakeWebsocketConnection();
+        $connection->received[] = json_encode(['event' => 'error', 'code' => '30005', 'msg' => 'login failed']);
+        $client = new WebsocketClient(
+            url: WebsocketClient::DEFAULT_PRIVATE_URL,
+            apiKey: 'api-key',
+            secretKey: 'secret-key',
+            passphrase: 'passphrase',
+            connection: $connection,
+        );
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('code=30005');
+        $client->connect();
     }
 }

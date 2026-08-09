@@ -14,8 +14,8 @@
     ],
     "require": {
         "php": "^8.2",
-        "guzzlehttp/guzzle": "^7.0",
-        "textalk/websocket": "^1.6",
+        "guzzlehttp/guzzle": "^7.15.2",
+        "phrity/websocket": "^3.7.3",
         "psr/log": "^3.0"
     },
     "require-dev": {

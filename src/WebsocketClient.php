@@ -25,6 +25,7 @@ class WebsocketClient
     public const DEMO_PRIVATE_URL = 'wss://wspap.bitget.com/v3/ws/private';
 
     private const PING_INTERVAL_SECONDS = 25;
+    private const PONG_TIMEOUT_SECONDS = 30;
     private const RECONNECT_MIN_SECONDS = 1;
     private const RECONNECT_MAX_SECONDS = 60;
 
@@ -90,8 +91,23 @@ class WebsocketClient
             if ($raw === null) {
                 continue;
             }
-            $decoded = json_decode($raw, true);
-            if (is_array($decoded) && ($decoded['event'] ?? null) === 'login') {
+            try {
+                $decoded = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+            } catch (\JsonException $e) {
+                $this->logger->warning('Bitget websocket login response decode failed', ['error' => $e->getMessage()]);
+                continue;
+            }
+            if (! is_array($decoded)) {
+                continue;
+            }
+            if (($decoded['event'] ?? null) === 'error') {
+                throw new \RuntimeException(sprintf(
+                    'Bitget websocket login failed: code=%s, message=%s',
+                    (string) ($decoded['code'] ?? 'UNKNOWN'),
+                    (string) ($decoded['msg'] ?? 'Unknown error'),
+                ));
+            }
+            if (($decoded['event'] ?? null) === 'login') {
                 $this->logger->info('Bitget websocket login succeeded');
 
                 return;
@@ -143,21 +159,35 @@ class WebsocketClient
     {
         $this->shouldRun = true;
         $lastPing = microtime(true);
+        $lastPong = $lastPing;
 
         while ($this->shouldRun) {
             try {
                 $raw = $this->connection->receive();
+                $now = microtime(true);
 
-                if (microtime(true) - $lastPing >= self::PING_INTERVAL_SECONDS) {
+                if ($now - $lastPing >= self::PING_INTERVAL_SECONDS) {
                     $this->connection->send('ping');
-                    $lastPing = microtime(true);
+                    $lastPing = $now;
+                }
+                if ($now - $lastPong >= self::PONG_TIMEOUT_SECONDS) {
+                    throw new ConnectionClosedException('Bitget websocket pong timed out.');
                 }
 
-                if ($raw === null || $raw === 'pong') {
+                if ($raw === null) {
+                    continue;
+                }
+                if ($raw === 'pong') {
+                    $lastPong = $now;
                     continue;
                 }
 
-                $decoded = json_decode($raw, true);
+                try {
+                    $decoded = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+                } catch (\JsonException $e) {
+                    $this->logger->warning('Bitget websocket message decode failed', ['error' => $e->getMessage()]);
+                    continue;
+                }
                 if (! is_array($decoded)) {
                     continue;
                 }
@@ -174,6 +204,7 @@ class WebsocketClient
                 $this->logger->warning('Bitget websocket disconnected, reconnecting', ['error' => $e->getMessage()]);
                 $this->reconnectWithBackoff();
                 $lastPing = microtime(true);
+                $lastPong = $lastPing;
             }
         }
     }

@@ -6,6 +6,7 @@ namespace Tigusigalpa\Bitget;
 
 use GuzzleHttp\Client as HttpClient;
 use GuzzleHttp\Exception\GuzzleException;
+use Psr\Http\Message\StreamInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Tigusigalpa\Bitget\Exceptions\AuthenticationException;
@@ -25,6 +26,8 @@ class Client
 {
     public const DEFAULT_BASE_URL = 'https://api.bitget.com';
 
+    private const MAX_RESPONSE_BODY_BYTES = 10485760;
+
     protected HttpClient $httpClient;
     protected LoggerInterface $logger;
     protected Signer $signer;
@@ -39,7 +42,7 @@ class Client
         ?HttpClient $httpClient = null,
         ?LoggerInterface $logger = null,
     ) {
-        $this->httpClient = $httpClient ?? new HttpClient(['base_uri' => $this->baseUrl, 'timeout' => 15]);
+        $this->httpClient = $httpClient ?? new HttpClient(['base_uri' => $this->baseUrl, 'timeout' => 15, 'verify' => true]);
         $this->logger = $logger ?? new NullLogger();
         $this->signer = new Signer($this->secretKey);
     }
@@ -76,7 +79,11 @@ class Client
     {
         $queryString = Signer::buildQueryString($query);
         $requestPath = $path . ($queryString !== '' ? '?' . $queryString : '');
-        $bodyJson = $body !== null ? json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : '';
+        try {
+            $bodyJson = $body !== null ? json_encode($body, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : '';
+        } catch (\JsonException $e) {
+            throw new BitgetException('ENCODE_ERROR', 'Failed to encode Bitget request body', '', $e);
+        }
 
         $headers = [
             'Content-Type' => 'application/json',
@@ -110,14 +117,21 @@ class Client
             throw new BitgetException('NETWORK_ERROR', $e->getMessage(), '', $e);
         }
 
-        $rawBody = (string) $response->getBody();
+        $rawBody = $this->readResponseBody($response->getBody());
         $status = $response->getStatusCode();
 
         if ($status === 429) {
             throw new RateLimitException('429', 'HTTP 429 Too Many Requests', $rawBody);
         }
 
-        $data = json_decode($rawBody, true);
+        try {
+            $data = json_decode($rawBody, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $e) {
+            if ($status < 200 || $status >= 300) {
+                throw new BitgetException((string) $status, 'Unexpected HTTP status ' . $status, $rawBody, $e);
+            }
+            throw new BitgetException('DECODE_ERROR', 'Failed to decode Bitget response body', $rawBody, $e);
+        }
         if (! is_array($data)) {
             throw new BitgetException('DECODE_ERROR', 'Failed to decode Bitget response body', $rawBody);
         }
@@ -126,8 +140,24 @@ class Client
         if ($code !== '' && $code !== '00000') {
             $this->throwException($code, (string) ($data['msg'] ?? 'Unknown error'), $rawBody);
         }
+        if ($status < 200 || $status >= 300) {
+            throw new BitgetException((string) $status, 'Unexpected HTTP status ' . $status, $rawBody);
+        }
 
         return $data['data'] ?? [];
+    }
+
+    private function readResponseBody(StreamInterface $body): string
+    {
+        $rawBody = '';
+        while (! $body->eof()) {
+            $rawBody .= $body->read(8192);
+            if (strlen($rawBody) > self::MAX_RESPONSE_BODY_BYTES) {
+                throw new BitgetException('RESPONSE_TOO_LARGE', 'Bitget response body exceeds ' . self::MAX_RESPONSE_BODY_BYTES . ' bytes');
+            }
+        }
+
+        return $rawBody;
     }
 
     protected function throwException(string $code, string $message, string $rawResponse): void
