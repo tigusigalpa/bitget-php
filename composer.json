@@ -1,0 +1,50 @@
+{
+    "name": "tigusigalpa/bitget-php",
+    "description": "A production-grade PHP/Laravel SDK for the Bitget Unified Trading Account (UTA) API v3.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["bitget", "crypto", "trading", "api", "sdk", "laravel", "uta"],
+    "homepage": "https://github.com/tigusigalpa/bitget-php",
+    "authors": [
+        {
+            "name": "Igor Sazonov",
+            "email": "sovletig@gmail.com",
+            "homepage": "https://github.com/tigusigalpa"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "guzzlehttp/guzzle": "^7.0",
+        "textalk/websocket": "^1.6",
+        "psr/log": "^3.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0",
+        "laravel/framework": "^10.0|^11.0|^12.0|^13.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Tigusigalpa\\Bitget\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tigusigalpa\\Bitget\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Tigusigalpa\\Bitget\\BitgetServiceProvider"
+            ],
+            "aliases": {
+                "Bitget": "Tigusigalpa\\Bitget\\Facades\\Bitget"
+            }
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
