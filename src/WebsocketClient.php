@@ -36,6 +36,7 @@ class WebsocketClient
     /** @var array<string, array> subscription key => args, restored after reconnect */
     private array $subscriptions = [];
 
+    private bool $connected = false;
     private bool $shouldRun = false;
 
     public function __construct(
@@ -57,15 +58,28 @@ class WebsocketClient
     }
 
     /**
-     * Connects and, for a private client, authenticates. Idempotent.
+     * Connects and, for a private client, authenticates. Calling this again
+     * while connected is a no-op.
      */
     public function connect(): void
     {
-        $this->connection->connect($this->url);
-        $this->logger->info('Bitget websocket connected', ['url' => $this->url]);
+        if ($this->connected) {
+            return;
+        }
 
-        if ($this->isPrivate()) {
-            $this->login();
+        try {
+            $this->connection->connect($this->url);
+            $this->logger->info('Bitget websocket connected', ['url' => $this->url]);
+
+            if ($this->isPrivate()) {
+                $this->login();
+            }
+
+            $this->connected = true;
+        } catch (\Throwable $e) {
+            $this->closeConnectionAfterFailure();
+
+            throw $e;
         }
     }
 
@@ -89,6 +103,10 @@ class WebsocketClient
         while (microtime(true) < $deadline) {
             $raw = $this->connection->receive();
             if ($raw === null) {
+                // A custom non-blocking transport may return immediately
+                // while it has no frame available. Avoid spinning a CPU core
+                // until the login deadline in that case.
+                usleep(10_000);
                 continue;
             }
             try {
@@ -108,6 +126,14 @@ class WebsocketClient
                 ));
             }
             if (($decoded['event'] ?? null) === 'login') {
+                $code = (string) ($decoded['code'] ?? '');
+                if ($code !== '' && $code !== '0' && $code !== '00000') {
+                    throw new \RuntimeException(sprintf(
+                        'Bitget websocket login failed: code=%s, message=%s',
+                        $code,
+                        (string) ($decoded['msg'] ?? 'Unknown error'),
+                    ));
+                }
                 $this->logger->info('Bitget websocket login succeeded');
 
                 return;
@@ -125,15 +151,42 @@ class WebsocketClient
     public function subscribe(array $arg): void
     {
         $key = $this->subscriptionKey($arg);
+        if (isset($this->subscriptions[$key])) {
+            return;
+        }
+
         $this->subscriptions[$key] = $arg;
-        $this->connection->send(json_encode(['op' => 'subscribe', 'args' => [$arg]], JSON_THROW_ON_ERROR));
+
+        try {
+            $this->connection->send(json_encode(['op' => 'subscribe', 'args' => [$arg]], JSON_THROW_ON_ERROR));
+        } catch (\Throwable $e) {
+            unset($this->subscriptions[$key]);
+            if ($e instanceof ConnectionClosedException) {
+                $this->connected = false;
+            }
+
+            throw $e;
+        }
     }
 
     public function unsubscribe(array $arg): void
     {
         $key = $this->subscriptionKey($arg);
+        if (! isset($this->subscriptions[$key])) {
+            return;
+        }
+
         unset($this->subscriptions[$key]);
-        $this->connection->send(json_encode(['op' => 'unsubscribe', 'args' => [$arg]], JSON_THROW_ON_ERROR));
+
+        try {
+            $this->connection->send(json_encode(['op' => 'unsubscribe', 'args' => [$arg]], JSON_THROW_ON_ERROR));
+        } catch (\Throwable $e) {
+            if ($e instanceof ConnectionClosedException) {
+                $this->connected = false;
+            }
+
+            throw $e;
+        }
     }
 
     private function subscriptionKey(array $arg): string
@@ -201,6 +254,7 @@ class WebsocketClient
 
                 $onMessage($decoded);
             } catch (ConnectionClosedException $e) {
+                $this->closeConnectionAfterFailure();
                 $this->logger->warning('Bitget websocket disconnected, reconnecting', ['error' => $e->getMessage()]);
                 $this->reconnectWithBackoff();
                 $lastPing = microtime(true);
@@ -214,20 +268,61 @@ class WebsocketClient
         $backoff = self::RECONNECT_MIN_SECONDS;
 
         while ($this->shouldRun) {
-            sleep($backoff);
+            if (! $this->waitForReconnectDelay($backoff)) {
+                return;
+            }
 
             try {
                 $this->connect();
-                foreach ($this->subscriptions as $arg) {
-                    $this->connection->send(json_encode(['op' => 'subscribe', 'args' => [$arg]], JSON_THROW_ON_ERROR));
+                if ($this->subscriptions !== []) {
+                    $this->connection->send(json_encode([
+                        'op' => 'subscribe',
+                        'args' => array_values($this->subscriptions),
+                    ], JSON_THROW_ON_ERROR));
                 }
                 $this->logger->info('Bitget websocket reconnected');
 
                 return;
             } catch (\Throwable $e) {
+                // connect() can have succeeded before a batched resubscribe
+                // fails. Always discard that transport before the next
+                // attempt so connect() actually opens a fresh socket.
+                $this->closeConnectionAfterFailure();
                 $this->logger->warning('Bitget websocket reconnect failed', ['error' => $e->getMessage(), 'backoff' => $backoff]);
                 $backoff = min($backoff * 2, self::RECONNECT_MAX_SECONDS);
             }
+        }
+    }
+
+    /**
+     * Waits in short intervals so stop() can interrupt a reconnect backoff
+     * promptly instead of waiting up to the 60-second cap.
+     */
+    private function waitForReconnectDelay(int $seconds): bool
+    {
+        $deadline = microtime(true) + $seconds;
+        while ($this->shouldRun && microtime(true) < $deadline) {
+            usleep((int) min(100_000, max(1_000, ($deadline - microtime(true)) * 1_000_000)));
+        }
+
+        return $this->shouldRun;
+    }
+
+    private function closeConnection(): void
+    {
+        try {
+            $this->connection->close();
+        } finally {
+            $this->connected = false;
+        }
+    }
+
+    private function closeConnectionAfterFailure(): void
+    {
+        try {
+            $this->closeConnection();
+        } catch (\Throwable $closeError) {
+            $this->logger->warning('Bitget websocket close after failure failed', ['error' => $closeError->getMessage()]);
         }
     }
 
@@ -238,6 +333,6 @@ class WebsocketClient
     public function stop(): void
     {
         $this->shouldRun = false;
-        $this->connection->close();
+        $this->closeConnection();
     }
 }

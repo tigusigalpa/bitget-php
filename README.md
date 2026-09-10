@@ -5,6 +5,11 @@
 [![PHP Version](https://img.shields.io/badge/php-%5E8.2-777bb4)](composer.json)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Laravel](https://img.shields.io/badge/laravel-10%20%7C%2011%20%7C%2012%20%7C%2013-ff2d20)](composer.json)
+[![Tests](https://github.com/tigusigalpa/bitget-php/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/tigusigalpa/bitget-php/actions/workflows/test.yml)
+[![Coverage](https://github.com/tigusigalpa/bitget-php/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/tigusigalpa/bitget-php/actions/workflows/coverage.yml)
+[![CodeQL](https://github.com/tigusigalpa/bitget-php/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/tigusigalpa/bitget-php/actions/workflows/codeql.yml)
+[![Security Audit](https://github.com/tigusigalpa/bitget-php/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/tigusigalpa/bitget-php/actions/workflows/security.yml)
+[![Codecov](https://codecov.io/gh/tigusigalpa/bitget-php/graph/badge.svg)](https://codecov.io/gh/tigusigalpa/bitget-php)
 
 A production-grade PHP SDK for the [Bitget Unified Trading Account (UTA) API v3](https://www.bitget.com/api-doc/uta/intro), with seamless Laravel 10-13 integration. Phase 1 covers Market, Account, and Trade REST services plus a reconnecting WebSocket client with a pluggable transport.
 
@@ -110,7 +115,7 @@ $ws->subscribe(['instType' => 'UTA', 'topic' => 'fast-fill', 'symbol' => 'defaul
 $ws->listen(fn (array $push) => /* handle fill */ null);
 ```
 
-`listen()` blocks the current process, answers Bitget's text-frame ping/pong heartbeat, and — on an unexpected disconnect — reconnects with exponential backoff (1s → 60s cap) and resubscribes every previously active channel. The default transport (`TextalkConnection`) is synchronous; to run under a non-blocking event loop (ReactPHP, Amp, Laravel Octane), implement `Tigusigalpa\Bitget\WebSocket\ConnectionInterface` and pass it as `WebsocketClient`'s `$connection` constructor argument.
+`connect()` is safe to call repeatedly while the socket is open. `subscribe()` is idempotent per channel, preventing duplicate subscription frames and unnecessary quota use. `listen()` blocks the current process, answers Bitget's text-frame ping/pong heartbeat, and — on an unexpected disconnect — reconnects with exponential backoff (1s → 60s cap) and restores every active channel in one subscription frame. The default transport (`TextalkConnection`) is synchronous; to run under a non-blocking event loop (ReactPHP, Amp, Laravel Octane), implement `Tigusigalpa\Bitget\WebSocket\ConnectionInterface` and pass it as `WebsocketClient`'s `$connection` constructor argument.
 
 Implemented private channel: [`fast-fill`](https://www.bitget.com/api-doc/uta/websocket/private/Fast-Fill-Channel). Other channels work through the same `subscribe()`/`listen()` API; see [docs/endpoints.md](docs/endpoints.md).
 

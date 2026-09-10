@@ -6,10 +6,15 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+permissions:
+  contents: read
+
 jobs:
   test:
+    name: PHP ${{ matrix.php-version }}
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         php-version: [ '8.2', '8.3', '8.4' ]
     steps:
@@ -17,24 +22,25 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php-version }}
-          coverage: xdebug
-      - uses: actions/cache@v4
-        with:
-          path: vendor
-          key: ${{ runner.os }}-composer-${{ matrix.php-version }}-${{ hashFiles('**/composer.lock') }}
-      - run: composer install --prefer-dist --no-progress
-      - run: vendor/bin/phpunit --coverage-clover=coverage.xml
-      - uses: codecov/codecov-action@v3
-        with:
-          file: ./coverage.xml
-          flags: unittests
+          tools: composer:v2
+          coverage: none
+      - name: Validate Composer metadata
+        run: composer validate --strict
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction --no-progress
+      - name: Run unit tests
+        run: vendor/bin/phpunit
 
   lint:
+    name: Composer and PHP syntax
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
-      - run: composer install --prefer-dist --no-progress
-      - run: find src -name "*.php" -print0 | xargs -0 -n1 php -l
+          tools: composer:v2
+      - name: Validate Composer metadata
+        run: composer validate --strict
+      - name: Check PHP syntax
+        run: find src tests -name "*.php" -print0 | xargs -0 -n1 php -l

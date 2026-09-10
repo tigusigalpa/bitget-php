@@ -1,0 +1,27 @@
+name: Security Audit
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    - cron: '37 4 * * 4'
+
+permissions:
+  contents: read
+
+jobs:
+  composer-audit:
+    name: Composer audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          tools: composer:v2
+      - name: Resolve dependencies
+        run: composer update --prefer-dist --no-interaction --no-progress
+      - name: Check for known vulnerabilities
+        run: composer audit --locked --no-interaction

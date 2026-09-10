@@ -16,6 +16,7 @@ use Tigusigalpa\Bitget\Exceptions\BitgetException;
 use Tigusigalpa\Bitget\Exceptions\RateLimitException;
 use Tigusigalpa\Bitget\Tests\TestCase;
 use Tigusigalpa\Bitget\WebsocketClient;
+use Tigusigalpa\Bitget\WebSocket\ConnectionClosedException;
 use Tigusigalpa\Bitget\WebSocket\ConnectionInterface;
 use Tigusigalpa\Bitget\WebSocket\TextalkConnection;
 
@@ -23,23 +24,43 @@ final class FakeWebsocketConnection implements ConnectionInterface
 {
     public array $sent = [];
     public array $received = [];
+    public int $connectCount = 0;
+    public int $closeCount = 0;
+    public ?\Throwable $sendException = null;
+    public ?int $failOnSendAttempt = null;
+    private int $sendAttempts = 0;
 
     public function connect(string $url): void
     {
+        $this->connectCount++;
     }
 
     public function send(string $payload): void
     {
+        $this->sendAttempts++;
+        if ($this->failOnSendAttempt === $this->sendAttempts) {
+            throw new ConnectionClosedException('socket closed');
+        }
+        if ($this->sendException !== null) {
+            throw $this->sendException;
+        }
+
         $this->sent[] = $payload;
     }
 
     public function receive(): ?string
     {
-        return array_shift($this->received);
+        $next = array_shift($this->received);
+        if ($next instanceof \Throwable) {
+            throw $next;
+        }
+
+        return $next;
     }
 
     public function close(): void
     {
+        $this->closeCount++;
     }
 }
 
@@ -200,5 +221,134 @@ class ClientTest extends TestCase
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('code=30005');
         $client->connect();
+    }
+
+    public function test_websocket_login_rejects_a_non_success_login_event(): void
+    {
+        $connection = new FakeWebsocketConnection();
+        $connection->received[] = json_encode(['event' => 'login', 'code' => '30005', 'msg' => 'login failed']);
+        $client = new WebsocketClient(
+            url: WebsocketClient::DEFAULT_PRIVATE_URL,
+            apiKey: 'api-key',
+            secretKey: 'secret-key',
+            passphrase: 'passphrase',
+            connection: $connection,
+        );
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('code=30005');
+        $client->connect();
+    }
+
+    public function test_websocket_connect_is_idempotent(): void
+    {
+        $connection = new FakeWebsocketConnection();
+        $client = new WebsocketClient(WebsocketClient::DEFAULT_PUBLIC_URL, connection: $connection);
+
+        $client->connect();
+        $client->connect();
+
+        $this->assertSame(1, $connection->connectCount);
+    }
+
+    public function test_websocket_subscribe_ignores_duplicate_channel(): void
+    {
+        $connection = new FakeWebsocketConnection();
+        $client = new WebsocketClient(WebsocketClient::DEFAULT_PUBLIC_URL, connection: $connection);
+        $channel = ['instType' => 'SPOT', 'topic' => 'ticker', 'symbol' => 'BTCUSDT'];
+
+        $client->subscribe($channel);
+        $client->subscribe($channel);
+
+        $this->assertCount(1, $connection->sent);
+        $this->assertSame(['op' => 'subscribe', 'args' => [$channel]], json_decode($connection->sent[0], true, 512, JSON_THROW_ON_ERROR));
+    }
+
+    public function test_websocket_failed_subscription_is_not_restored_after_reconnect(): void
+    {
+        $connection = new FakeWebsocketConnection();
+        $client = new WebsocketClient(WebsocketClient::DEFAULT_PUBLIC_URL, connection: $connection);
+        $channel = ['instType' => 'SPOT', 'topic' => 'ticker', 'symbol' => 'BTCUSDT'];
+        $client->connect();
+        $connection->sendException = new ConnectionClosedException('socket closed');
+
+        try {
+            $client->subscribe($channel);
+            $this->fail('Expected ConnectionClosedException');
+        } catch (ConnectionClosedException) {
+        }
+
+        $connection->sendException = null;
+        $connection->received = [
+            new ConnectionClosedException('socket closed'),
+            json_encode(['arg' => $channel, 'data' => []]),
+        ];
+
+        $client->listen(function () use ($client): void {
+            $client->stop();
+        });
+
+        $this->assertSame(2, $connection->connectCount);
+        $this->assertCount(0, $connection->sent);
+    }
+
+    public function test_websocket_reconnect_restores_active_channels_in_one_request(): void
+    {
+        $connection = new FakeWebsocketConnection();
+        $client = new WebsocketClient(WebsocketClient::DEFAULT_PUBLIC_URL, connection: $connection);
+        $channelOne = ['instType' => 'SPOT', 'topic' => 'ticker', 'symbol' => 'BTCUSDT'];
+        $channelTwo = ['instType' => 'SPOT', 'topic' => 'ticker', 'symbol' => 'ETHUSDT'];
+
+        $client->connect();
+        $client->subscribe($channelOne);
+        $client->subscribe($channelTwo);
+        $connection->received = [
+            new ConnectionClosedException('socket closed'),
+            json_encode(['arg' => $channelOne, 'data' => []]),
+        ];
+
+        $client->listen(function () use ($client): void {
+            $client->stop();
+        });
+
+        $this->assertSame(2, $connection->connectCount);
+        $this->assertCount(3, $connection->sent);
+        $this->assertSame([
+            'op' => 'subscribe',
+            'args' => [$channelOne, $channelTwo],
+        ], json_decode($connection->sent[2], true, 512, JSON_THROW_ON_ERROR));
+    }
+
+    public function test_websocket_retries_with_a_fresh_connection_when_resubscribe_fails(): void
+    {
+        $connection = new FakeWebsocketConnection();
+        $client = new WebsocketClient(WebsocketClient::DEFAULT_PUBLIC_URL, connection: $connection);
+        $channel = ['instType' => 'SPOT', 'topic' => 'ticker', 'symbol' => 'BTCUSDT'];
+
+        $client->connect();
+        $client->subscribe($channel);
+        $connection->failOnSendAttempt = 2;
+        $connection->received = [
+            new ConnectionClosedException('socket closed'),
+            json_encode(['arg' => $channel, 'data' => []]),
+        ];
+
+        $client->listen(function () use ($client): void {
+            $client->stop();
+        });
+
+        $this->assertSame(3, $connection->connectCount);
+        $this->assertSame(3, $connection->closeCount);
+        $this->assertCount(2, $connection->sent);
+    }
+
+    public function test_websocket_unsubscribe_ignores_unknown_channel(): void
+    {
+        $connection = new FakeWebsocketConnection();
+        $client = new WebsocketClient(WebsocketClient::DEFAULT_PUBLIC_URL, connection: $connection);
+
+        $client->unsubscribe(['instType' => 'SPOT', 'topic' => 'ticker', 'symbol' => 'BTCUSDT']);
+
+        $this->assertSame([], $connection->sent);
     }
 }
