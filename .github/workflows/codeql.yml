@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   analyze:
-    name: Analyze PHP code
+    name: Analyze GitHub Actions workflows
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -24,8 +24,6 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
-          languages: php
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v4
+          languages: actions
       - name: Analyze
         uses: github/codeql-action/analyze@v4

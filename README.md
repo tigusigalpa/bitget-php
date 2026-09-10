@@ -1,4 +1,4 @@
-# Bitget PHP SDK
+# Bitget PHP/Laravel Client/SDK/Client
 
 ![Bitget PHP Laravel SDK](https://i.postimg.cc/BncJyFmW/bitget-php-sdk-github.jpg)
 
@@ -7,7 +7,8 @@
 [![Laravel](https://img.shields.io/badge/laravel-10%20%7C%2011%20%7C%2012%20%7C%2013-ff2d20)](composer.json)
 [![Tests](https://github.com/tigusigalpa/bitget-php/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/tigusigalpa/bitget-php/actions/workflows/test.yml)
 [![Coverage](https://github.com/tigusigalpa/bitget-php/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/tigusigalpa/bitget-php/actions/workflows/coverage.yml)
-[![CodeQL](https://github.com/tigusigalpa/bitget-php/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/tigusigalpa/bitget-php/actions/workflows/codeql.yml)
+[![CodeQL Actions](https://github.com/tigusigalpa/bitget-php/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/tigusigalpa/bitget-php/actions/workflows/codeql.yml)
+[![Static Analysis](https://github.com/tigusigalpa/bitget-php/actions/workflows/static-analysis.yml/badge.svg?branch=main)](https://github.com/tigusigalpa/bitget-php/actions/workflows/static-analysis.yml)
 [![Security Audit](https://github.com/tigusigalpa/bitget-php/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/tigusigalpa/bitget-php/actions/workflows/security.yml)
 [![Codecov](https://codecov.io/gh/tigusigalpa/bitget-php/graph/badge.svg)](https://codecov.io/gh/tigusigalpa/bitget-php)
 
