@@ -15,7 +15,7 @@
     "require": {
         "php": "^8.2",
         "guzzlehttp/guzzle": "^7.15.2",
-        "phrity/websocket": "^3.7.3",
+        "phrity/websocket": "^3.7.3 || ^4.0.0",
         "psr/log": "^3.0"
     },
     "require-dev": {
